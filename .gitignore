@@ -2,6 +2,9 @@
 cartera.json
 bolsillo-respaldo-*.json
 
+# Informe de auditoría: describe cómo atacar la app
+SEGURIDAD.md
+
 # Sistema
 .DS_Store
 Thumbs.db

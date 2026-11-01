@@ -151,6 +151,18 @@ function resumenMes(mes) {
   return r;
 }
 
+// Lo que sobró (o faltó) de todos los meses anteriores a `mes`, más el saldo inicial de Ajustes.
+function arrastreHasta(mes) {
+  const inicio = `${mes}-01`;
+  let total = Number(datos.ajustes.saldoInicial) || 0;
+  for (const m of datos.movimientos) {
+    if (!m.fecha || m.fecha >= inicio) continue;
+    const v = enPesos(m.monto, m.moneda, m.cambio);
+    if (v != null) total += m.tipo === 'ingreso' ? v : -v;
+  }
+  return total;
+}
+
 function valorPosicion(p) {
   if (Number.isFinite(p.cantidad) && Number.isFinite(p.precioActual)) return p.cantidad * p.precioActual;
   return Number.isFinite(p.valorManual) ? p.valorManual : 0;
@@ -250,9 +262,12 @@ function vacio(texto, boton = '') {
 
 function renderInicio() {
   const r = resumenMes(ui.mes);
+  const arrastre = arrastreHasta(ui.mes);
+  const disponible = arrastre + r.balance;
   const ahorro = r.ingresos > 0 ? r.balance / r.ingresos : null;
   const sub = ahorro == null
-    ? (r.gastos > 0 ? 'Todavía no cargaste ingresos este mes' : 'Empezá cargando un ingreso o un gasto')
+    ? (r.gastos > 0 ? 'Todavía no cargaste ingresos este mes'
+      : arrastre ? 'Todavía no hay movimientos este mes' : 'Empezá cargando un ingreso o un gasto')
     : ahorro >= 0 ? `Guardaste el ${Math.round(ahorro * 100)}% de lo que entró` : `Gastaste ${Math.round(-ahorro * 100)}% más de lo que entró`;
   const notaUsd = r.usd.ingreso || r.usd.gasto
     ? `<p class="nota">Incluye ${[r.usd.ingreso && `+${plata(r.usd.ingreso, 'USD')}`, r.usd.gasto && `−${plata(r.usd.gasto, 'USD')}`].filter(Boolean).join(' y ')}
@@ -269,8 +284,12 @@ function renderInicio() {
 
   return `${cabecera('Resumen', `<div class="cab-der">${selectorMes()}${perfil}</div>`)}
     <section class="tarjeta hero">
-      <p class="etiqueta">Te queda este mes</p>
-      <p class="monto-grande ${r.balance < 0 ? 'neg' : ''}">${plata(r.balance)}</p>
+      <p class="etiqueta">${arrastre ? 'Tenés disponible' : 'Te queda este mes'}</p>
+      <p class="monto-grande ${disponible < 0 ? 'neg' : ''}">${plata(disponible)}</p>
+      ${arrastre ? `<p class="arrastre">
+        <span>${arrastre >= 0 ? 'Venías con' : 'Venías debiendo'} <strong>${plata(Math.abs(arrastre))}</strong> de ${nombreMes(moverMes(ui.mes, -1)).split(' ')[0]}</span>
+        <span>Este mes <strong class="${r.balance < 0 ? 'gas' : 'ing'}">${plata(r.balance, 'ARS', { signo: true })}</strong></span>
+      </p>` : ''}
       <p class="sub">${sub}</p>
       <div class="duo">
         <div><p class="etiqueta"><i class="punto ing"></i>Entró</p><p class="monto-medio">${plata(r.ingresos)}</p></div>
@@ -386,6 +405,14 @@ function renderAjustes() {
         ? `<p class="aviso">Modo local: los datos están solo en este dispositivo. Cuando conectes Firebase se guardan en la nube.</p>`
         : `<p>Entraste como <strong>${esc(u.email)}</strong>. Tus datos se guardan en la nube y se sincronizan entre dispositivos.</p>
            <button type="button" class="btn" data-accion="salir">Cerrar sesión</button>`}
+    </section>
+    <section class="tarjeta">
+      <h2>Saldo inicial</h2>
+      <p class="nota">La plata que tenías antes de empezar a cargar movimientos. Se suma a lo disponible de todos los meses.</p>
+      <form class="agregar" data-form="saldo">
+        <input name="saldo" inputmode="decimal" autocomplete="off" placeholder="0" value="${paraInput(datos.ajustes.saldoInicial || null)}" aria-label="Saldo inicial en pesos">
+        <button class="btn">Guardar</button>
+      </form>
     </section>
     ${listaEditable('Categorías de gastos', 'categoriasGasto')}
     ${listaEditable('Fuentes de ingreso', 'fuentesIngreso')}
@@ -792,6 +819,12 @@ document.addEventListener('submit', e => {
   if (form.dataset.form === 'movimiento') guardarMovimiento(form);
   else if (form.dataset.form === 'posicion') guardarPosicion(form);
   else if (form.dataset.form === 'login') enviarLogin(form);
+  else if (form.dataset.form === 'saldo') {
+    const saldo = leerNumero(form.saldo.value);
+    if (Number.isNaN(saldo)) return toast('El saldo no se entiende. Usá coma para los decimales.');
+    store.guardarAjustes({ ...datos.ajustes, saldoInicial: saldo || 0 });
+    toast('Saldo inicial guardado');
+  }
   else if (form.dataset.form === 'lista') {
     const valor = form.valor.value.trim();
     const clave = form.dataset.lista;
