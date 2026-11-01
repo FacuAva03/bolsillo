@@ -8,6 +8,7 @@ const COLOR_TIPO = {
   Cripto: 'var(--c4)', Liquidez: 'var(--c5)', Otro: 'var(--c6)',
 };
 const CLAVE_DOLAR = 'bolsillo:dolar';
+const CUENTAS = [{ id: 'digital', nombre: 'Digital' }, { id: 'efectivo', nombre: 'Efectivo' }];
 
 const $vista = document.getElementById('vista');
 const $tabbar = document.getElementById('tabbar');
@@ -19,6 +20,7 @@ const ui = { mes: hoyISO().slice(0, 7), filtro: 'todo', modoLogin: 'entrar', dol
 if (store.modoDemo && new Date().getDate() < 10) ui.mes = moverMes(ui.mes, -1);
 let datos = null;
 let ultimoTipo = 'gasto';
+let ultimaCuenta = 'digital';
 
 /* ---------- utilidades ---------- */
 
@@ -136,6 +138,7 @@ function resumenMes(mes) {
   const movs = datos.movimientos.filter(m => m.fecha?.startsWith(mes));
   const r = { movs, ingresos: 0, gastos: 0, porCat: { ingreso: {}, gasto: {} }, usd: { ingreso: 0, gasto: 0 }, sinConvertir: 0 };
   for (const m of movs) {
+    if (m.tipo === 'transferencia') continue; // pasar plata entre cuentas no es ingreso ni gasto
     if (m.moneda === 'USD') r.usd[m.tipo] += m.monto;
     const v = enPesos(m.monto, m.moneda, m.cambio);
     if (v == null) {
@@ -151,17 +154,37 @@ function resumenMes(mes) {
   return r;
 }
 
-// Lo que sobró (o faltó) de todos los meses anteriores a `mes`, más el saldo inicial de Ajustes.
-function arrastreHasta(mes) {
-  const inicio = `${mes}-01`;
-  let total = Number(datos.ajustes.saldoInicial) || 0;
-  for (const m of datos.movimientos) {
-    if (!m.fecha || m.fecha >= inicio) continue;
-    const v = enPesos(m.monto, m.moneda, m.cambio);
-    if (v != null) total += m.tipo === 'ingreso' ? v : -v;
-  }
-  return total;
+const nombreCuenta = id => CUENTAS.find(c => c.id === id)?.nombre || id;
+// Los movimientos cargados antes de que existieran las cuentas van a Digital, salvo los pagados en efectivo.
+const cuentaDe = m => m.cuenta || (m.medio === 'Efectivo' ? 'efectivo' : 'digital');
+
+function saldosIniciales() {
+  const s = datos.ajustes.saldos || {};
+  return { digital: Number(s.digital ?? datos.ajustes.saldoInicial) || 0, efectivo: Number(s.efectivo) || 0 };
 }
+
+// Saldo de cada cuenta: saldo inicial más los movimientos que cumplen `incluir`.
+function saldos(incluir) {
+  const s = saldosIniciales();
+  for (const m of datos.movimientos) {
+    if (!m.fecha || !incluir(m)) continue;
+    const v = enPesos(m.monto, m.moneda, m.cambio);
+    if (v == null) continue;
+    if (m.tipo === 'transferencia') {
+      s[m.desde] = (s[m.desde] || 0) - v;
+      s[m.hacia] = (s[m.hacia] || 0) + v;
+    } else {
+      const c = cuentaDe(m);
+      s[c] = (s[c] || 0) + (m.tipo === 'ingreso' ? v : -v);
+    }
+  }
+  return s;
+}
+
+const totalSaldos = s => Object.values(s).reduce((a, b) => a + b, 0);
+
+// Lo que sobró (o faltó) de todos los meses anteriores a `mes`, más los saldos iniciales.
+const arrastreHasta = mes => totalSaldos(saldos(m => m.fecha < `${mes}-01`));
 
 function valorPosicion(p) {
   if (Number.isFinite(p.cantidad) && Number.isFinite(p.precioActual)) return p.cantidad * p.precioActual;
@@ -239,8 +262,16 @@ function tendencia() {
 }
 
 function filaMovimiento(m) {
+  if (m.tipo === 'transferencia') {
+    return `<button type="button" class="mov" data-accion="editar-mov" data-id="${esc(m.id)}">
+      <span class="mov-icono transferencia" aria-hidden="true">⇄</span>
+      <span class="mov-texto"><strong>${esc(nombreCuenta(m.desde))} → ${esc(nombreCuenta(m.hacia))}</strong>${m.nota ? `<small>${esc(m.nota)}</small>` : ''}</span>
+      <span class="mov-monto transferencia">${plata(m.monto, m.moneda)}</span>
+    </button>`;
+  }
   const signo = m.tipo === 'ingreso' ? '+' : '−';
-  const detalle = [m.nota, m.tipo === 'gasto' ? m.medio : ''].filter(Boolean).join(' · ');
+  const donde = cuentaDe(m) === 'efectivo' ? 'Efectivo' : m.tipo === 'gasto' ? m.medio : '';
+  const detalle = [m.nota, donde].filter(Boolean).join(' · ');
   const enArs = m.moneda === 'USD' ? enPesos(m.monto, m.moneda, m.cambio) : null;
   const conversion = m.moneda === 'USD'
     ? `<small title="${m.cambio > 0 ? `Cambio: ${plata(m.cambio)}` : 'Al dólar MEP'}">${enArs == null ? 'sin cotización' : `${plata(enArs)}${m.cambio > 0 ? '' : ' (MEP)'}`}</small>`
@@ -264,6 +295,7 @@ function renderInicio() {
   const r = resumenMes(ui.mes);
   const arrastre = arrastreHasta(ui.mes);
   const disponible = arrastre + r.balance;
+  const porCuenta = saldos(m => m.fecha <= `${ui.mes}-31`);
   const ahorro = r.ingresos > 0 ? r.balance / r.ingresos : null;
   const sub = ahorro == null
     ? (r.gastos > 0 ? 'Todavía no cargaste ingresos este mes'
@@ -286,6 +318,9 @@ function renderInicio() {
     <section class="tarjeta hero">
       <p class="etiqueta">${arrastre ? 'Tenés disponible' : 'Te queda este mes'}</p>
       <p class="monto-grande ${disponible < 0 ? 'neg' : ''}">${plata(disponible)}</p>
+      ${disponible || r.movs.length ? `<div class="cuentas">${CUENTAS.map(c => `<div class="cuenta">
+        <span>${c.nombre}</span><strong class="${porCuenta[c.id] < 0 ? 'gas' : ''}">${plata(porCuenta[c.id])}</strong>
+      </div>`).join('')}</div>` : ''}
       ${arrastre ? `<p class="arrastre">
         <span>${arrastre >= 0 ? 'Venías con' : 'Venías debiendo'} <strong>${plata(Math.abs(arrastre))}</strong> de ${nombreMes(moverMes(ui.mes, -1)).split(' ')[0]}</span>
         <span>Este mes <strong class="${r.balance < 0 ? 'gas' : 'ing'}">${plata(r.balance, 'ARS', { signo: true })}</strong></span>
@@ -326,7 +361,8 @@ function renderMovimientos() {
   return `${cabecera('Movimientos', selectorMes())}
     <div class="filtros">${filtro('todo', 'Todo')}${filtro('ingreso', 'Ingresos')}${filtro('gasto', 'Gastos')}</div>
     ${movs.length ? [...dias].map(([fecha, lista]) => {
-      const neto = lista.reduce((s, m) => s + (enPesos(m.monto, m.moneda, m.cambio) || 0) * (m.tipo === 'ingreso' ? 1 : -1), 0);
+      const neto = lista.reduce((s, m) => m.tipo === 'transferencia' ? s
+        : s + (enPesos(m.monto, m.moneda, m.cambio) || 0) * (m.tipo === 'ingreso' ? 1 : -1), 0);
       return `<section class="dia">
         <h3><span>${nombreDia(fecha)}</span><span class="num">${plata(neto, 'ARS', { signo: true })}</span></h3>
         <div class="lista">${lista.map(filaMovimiento).join('')}</div>
@@ -408,10 +444,12 @@ function renderAjustes() {
     </section>
     <section class="tarjeta">
       <h2>Saldo inicial</h2>
-      <p class="nota">La plata que tenías antes de empezar a cargar movimientos. Se suma a lo disponible de todos los meses.</p>
-      <form class="agregar" data-form="saldo">
-        <input name="saldo" inputmode="decimal" autocomplete="off" placeholder="0" value="${paraInput(datos.ajustes.saldoInicial || null)}" aria-label="Saldo inicial en pesos">
-        <button class="btn">Guardar</button>
+      <p class="nota">La plata que tenías en cada lugar antes de empezar a cargar movimientos. Sin contar lo del broker, que está en Cartera.</p>
+      <form data-form="saldo">
+        <div class="fila">
+          ${CUENTAS.map(c => `<label class="campo">${c.nombre}<input name="${c.id}" inputmode="decimal" autocomplete="off" placeholder="0" value="${paraInput(saldosIniciales()[c.id] || null)}"></label>`).join('')}
+        </div>
+        <button class="btn btn-bloque" style="margin-top:14px">Guardar</button>
       </form>
     </section>
     ${listaEditable('Categorías de gastos', 'categoriasGasto')}
@@ -498,6 +536,10 @@ const claveLista = tipo => (tipo === 'gasto' ? 'categoriasGasto' : 'fuentesIngre
 
 function abrirMovimiento(m) {
   const tipo = m?.tipo || ultimoTipo;
+  const pasaje = tipo === 'transferencia';
+  const cuenta = m && !pasaje ? cuentaDe(m) : ultimaCuenta;
+  const sentido = pasaje ? `${m.desde}>${m.hacia}` : 'digital>efectivo';
+  const tipoCat = tipo === 'ingreso' ? 'ingreso' : 'gasto';
   const medios = datos.ajustes.medios || [];
   abrirHoja(`<form data-form="movimiento" data-id="${esc(m?.id || '')}" data-tipo="${tipo}" novalidate>
     <div class="hoja-cab">
@@ -508,6 +550,7 @@ function abrirMovimiento(m) {
     <div class="segmento">
       <label><input type="radio" name="tipo" value="gasto" ${tipo === 'gasto' ? 'checked' : ''}><span class="gas">Gasto</span></label>
       <label><input type="radio" name="tipo" value="ingreso" ${tipo === 'ingreso' ? 'checked' : ''}><span class="ing">Ingreso</span></label>
+      <label><input type="radio" name="tipo" value="transferencia" ${pasaje ? 'checked' : ''}><span>Entre cuentas</span></label>
     </div>
     <div class="monto-input">
       <select name="moneda" aria-label="Moneda">
@@ -523,12 +566,27 @@ function abrirMovimiento(m) {
       </div>
       <p class="nota">Completá uno y el otro se calcula solo. Vacío, usa el MEP del día${ui.dolar ? ` (${plata(ui.dolar.venta)})` : ''}.</p>
     </div>
-    <p class="campo-titulo" id="titulo-cat">${tipo === 'gasto' ? 'Categoría' : 'De dónde viene'}</p>
-    <div class="chips" id="chips-cat" role="radiogroup" aria-labelledby="titulo-cat">${chipsCategorias(tipo, m?.categoria)}</div>
-    <label class="campo" id="campo-cat-nueva" hidden>Nombre de la nueva<input name="categoriaNueva" maxlength="30" autocomplete="off" placeholder="${tipo === 'gasto' ? 'Por ejemplo: Mascota' : 'Por ejemplo: Venta de algo'}"></label>
+    <div id="bloque-cuenta" ${pasaje ? 'hidden' : ''}>
+      <p class="campo-titulo" id="titulo-cuenta">${tipo === 'ingreso' ? 'Entra a' : 'Sale de'}</p>
+      <div class="segmento segmento-chico" role="radiogroup" aria-labelledby="titulo-cuenta">
+        ${CUENTAS.map(c => `<label><input type="radio" name="cuenta" value="${c.id}" ${c.id === cuenta ? 'checked' : ''}><span>${c.nombre}</span></label>`).join('')}
+      </div>
+    </div>
+    <div id="bloque-pasaje" ${pasaje ? '' : 'hidden'}>
+      <p class="campo-titulo" id="titulo-pasaje">Qué hiciste</p>
+      <div class="segmento segmento-chico" role="radiogroup" aria-labelledby="titulo-pasaje">
+        <label><input type="radio" name="sentido" value="digital>efectivo" ${sentido === 'digital>efectivo' ? 'checked' : ''}><span>Saqué efectivo</span></label>
+        <label><input type="radio" name="sentido" value="efectivo>digital" ${sentido === 'efectivo>digital' ? 'checked' : ''}><span>Deposité efectivo</span></label>
+      </div>
+    </div>
+    <div id="bloque-cat" ${pasaje ? 'hidden' : ''}>
+      <p class="campo-titulo" id="titulo-cat">${tipoCat === 'gasto' ? 'Categoría' : 'De dónde viene'}</p>
+      <div class="chips" id="chips-cat" role="radiogroup" aria-labelledby="titulo-cat">${chipsCategorias(tipoCat, m?.categoria)}</div>
+      <label class="campo" id="campo-cat-nueva" hidden>Nombre de la nueva<input name="categoriaNueva" maxlength="30" autocomplete="off" placeholder="${tipoCat === 'gasto' ? 'Por ejemplo: Mascota' : 'Por ejemplo: Venta de algo'}"></label>
+    </div>
     <div class="fila">
       <label class="campo">Fecha<input type="date" name="fecha" value="${m?.fecha || hoyISO()}" max="${hoyISO()}"></label>
-      <label class="campo" id="campo-medio" ${tipo === 'gasto' ? '' : 'hidden'}>Medio
+      <label class="campo" id="campo-medio" ${tipo === 'gasto' && cuenta === 'digital' ? '' : 'hidden'}>Medio
         <select name="medio"><option value="">—</option>${medios.map(x => `<option ${m?.medio === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
       </label>
     </div>
@@ -605,37 +663,63 @@ function guardarMovimiento(form) {
   const tipo = f.get('tipo');
   const monto = leerNumero(f.get('monto'));
   if (!(monto > 0)) return errorForm('Poné un monto mayor a cero.');
-  // Una categoría nueva escrita acá se suma a la lista (si ya existía, se usa la que está).
-  const nueva = (f.get('categoriaNueva') || '').trim();
-  let categoria = f.get('categoria');
-  if (nueva) {
-    const clave = claveLista(tipo);
-    const lista = datos.ajustes[clave] || [];
-    categoria = lista.find(c => c.toLowerCase() === nueva.toLowerCase()) || nueva;
-    if (!lista.includes(categoria)) store.guardarAjustes({ ...datos.ajustes, [clave]: [...lista, categoria] });
-  }
-  if (!categoria) return errorForm(tipo === 'gasto' ? 'Elegí una categoría.' : 'Elegí de dónde viene.');
   const moneda = f.get('moneda');
   const cambio = moneda === 'USD' ? leerNumero(f.get('cambio')) : null;
   if (Number.isNaN(cambio) || cambio < 0) return errorForm('El cambio no se entiende. Usá coma para los decimales.');
   const original = datos.movimientos.find(m => m.id === form.dataset.id);
   const fecha = f.get('fecha') || hoyISO();
-  store.guardar('movimientos', {
+  const base = {
     id: original?.id || store.nuevoId(),
     tipo,
     monto,
     moneda,
     cambio: cambio || null,
-    categoria,
     fecha,
-    medio: tipo === 'gasto' ? f.get('medio') || '' : '',
     nota: f.get('nota').trim(),
     creado: original?.creado || Date.now(),
-  });
-  ultimoTipo = tipo;
+  };
+  const accion = original ? 'actualizado' : 'guardado';
+
+  if (tipo === 'transferencia') {
+    const [desde, hacia] = (f.get('sentido') || 'digital>efectivo').split('>');
+    store.guardar('movimientos', { ...base, desde, hacia });
+    toast(`Movimiento entre cuentas ${accion}`);
+  } else {
+    // Una categoría nueva escrita acá se suma a la lista (si ya existía, se usa la que está).
+    const nueva = (f.get('categoriaNueva') || '').trim();
+    let categoria = f.get('categoria');
+    if (nueva) {
+      const clave = claveLista(tipo);
+      const lista = datos.ajustes[clave] || [];
+      categoria = lista.find(c => c.toLowerCase() === nueva.toLowerCase()) || nueva;
+      if (!lista.includes(categoria)) store.guardarAjustes({ ...datos.ajustes, [clave]: [...lista, categoria] });
+    }
+    if (!categoria) return errorForm(tipo === 'gasto' ? 'Elegí una categoría.' : 'Elegí de dónde viene.');
+    const cuenta = f.get('cuenta') || 'digital';
+    store.guardar('movimientos', {
+      ...base,
+      categoria,
+      cuenta,
+      medio: tipo === 'gasto' && cuenta === 'digital' ? f.get('medio') || '' : '',
+    });
+    ultimoTipo = tipo;
+    ultimaCuenta = cuenta;
+    toast(`${tipo === 'gasto' ? 'Gasto' : 'Ingreso'} ${accion}`);
+  }
   ui.mes = fecha.slice(0, 7);
   $hoja.close();
-  toast(`${tipo === 'gasto' ? 'Gasto' : 'Ingreso'} ${original ? 'actualizado' : 'guardado'}`);
+}
+
+// Muestra solo lo que corresponde al tipo de movimiento y a la cuenta elegidos.
+function actualizarFormulario(form) {
+  const tipo = form.querySelector('[name=tipo]:checked').value;
+  const cuenta = form.querySelector('[name=cuenta]:checked')?.value;
+  const pasaje = tipo === 'transferencia';
+  form.querySelector('#bloque-cuenta').hidden = pasaje;
+  form.querySelector('#bloque-pasaje').hidden = !pasaje;
+  form.querySelector('#bloque-cat').hidden = pasaje;
+  form.querySelector('#titulo-cuenta').textContent = tipo === 'ingreso' ? 'Entra a' : 'Sale de';
+  form.querySelector('#campo-medio').hidden = tipo !== 'gasto' || cuenta !== 'digital';
 }
 
 function guardarPosicion(form) {
@@ -820,10 +904,14 @@ document.addEventListener('submit', e => {
   else if (form.dataset.form === 'posicion') guardarPosicion(form);
   else if (form.dataset.form === 'login') enviarLogin(form);
   else if (form.dataset.form === 'saldo') {
-    const saldo = leerNumero(form.saldo.value);
-    if (Number.isNaN(saldo)) return toast('El saldo no se entiende. Usá coma para los decimales.');
-    store.guardarAjustes({ ...datos.ajustes, saldoInicial: saldo || 0 });
-    toast('Saldo inicial guardado');
+    const nuevos = {};
+    for (const c of CUENTAS) {
+      const valor = leerNumero(form[c.id].value);
+      if (Number.isNaN(valor)) return toast('Hay un saldo que no se entiende. Usá coma para los decimales.');
+      nuevos[c.id] = valor || 0;
+    }
+    store.guardarAjustes({ ...datos.ajustes, saldos: nuevos, saldoInicial: null });
+    toast('Saldos iniciales guardados');
   }
   else if (form.dataset.form === 'lista') {
     const valor = form.valor.value.trim();
@@ -849,12 +937,14 @@ document.addEventListener('change', e => {
     $campo.hidden = true;
     $campo.querySelector('input').value = '';
   }
-  if (e.target.name === 'tipo' && e.target.closest('[data-form=movimiento]')) {
+  if (e.target.name === 'tipo' && e.target.closest('[data-form=movimiento]') && e.target.value !== 'transferencia') {
     const tipo = e.target.value;
     $hoja.querySelector('[name=categoriaNueva]').placeholder = tipo === 'gasto' ? 'Por ejemplo: Mascota' : 'Por ejemplo: Venta de algo';
     $hoja.querySelector('#chips-cat').innerHTML = chipsCategorias(tipo);
     $hoja.querySelector('#titulo-cat').textContent = tipo === 'gasto' ? 'Categoría' : 'De dónde viene';
-    $hoja.querySelector('#campo-medio').hidden = tipo !== 'gasto';
+  }
+  if ((e.target.name === 'tipo' || e.target.name === 'cuenta') && e.target.closest('[data-form=movimiento]')) {
+    actualizarFormulario(e.target.closest('form'));
   }
 });
 

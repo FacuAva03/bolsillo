@@ -212,6 +212,21 @@ h2 {
 }
 .monto-grande.neg { color: var(--gas); }
 .sub { margin: 0; color: var(--muted); font-size: 14px; }
+.cuentas {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.cuenta {
+  display: grid;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.cuenta span { font-size: 13px; font-weight: 700; color: var(--muted); }
+.cuenta strong { font-size: 17px; font-weight: 800; }
+.cuenta strong.gas { color: var(--gas); }
 .arrastre {
   display: flex;
   flex-wrap: wrap;
@@ -355,6 +370,8 @@ h2 {
 }
 .mov-icono.gasto { background: var(--gas-soft); color: var(--gas); }
 .mov-icono.ingreso { background: var(--ing-soft); color: var(--ing); }
+.mov-icono.transferencia { background: var(--surface-2); color: var(--muted); font-size: 18px; }
+.mov-monto.transferencia { color: var(--muted); }
 
 .mov-texto { flex: 1; min-width: 0; display: grid; }
 .mov-texto strong { font-weight: 700; }
@@ -669,7 +686,8 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 
 .segmento {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   padding: 4px;
   border-radius: 14px;
   background: var(--surface-2);
@@ -677,13 +695,16 @@ input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible
 .segmento input, .chip input { position: absolute; opacity: 0; pointer-events: none; }
 .segmento span {
   display: block;
-  padding: 9px;
+  padding: 9px 4px;
+  font-size: 15px;
+  white-space: nowrap;
   border-radius: 11px;
   text-align: center;
   font-weight: 800;
   color: var(--muted);
 }
-.segmento input:checked + span { background: var(--surface); box-shadow: 0 1px 3px rgb(0 0 0 / 12%); }
+.segmento input:checked + span { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgb(0 0 0 / 12%); }
+.segmento-chico span { padding: 7px; font-size: 14px; }
 .segmento input:checked + span.gas { color: var(--gas); }
 .segmento input:checked + span.ing { color: var(--ing); }
 .segmento input:focus-visible + span, .chip input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 1px; }

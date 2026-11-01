@@ -47,7 +47,14 @@ export function datosDemo(hoy = new Date()) {
     mov('gasto', entre(20000, 35000), 'Transporte', dia(10), { medio: 'Mercado Pago', nota: 'SUBE y nafta' });
     for (const n of [4, 11, 18, 25]) mov('gasto', entre(28000, 55000), 'Súper', dia(n), { medio: 'Débito' });
     for (const n of [6, 13, 21, 27]) mov('gasto', entre(9000, 26000), 'Comida', dia(n), { medio: 'Mercado Pago', nota: 'Delivery' });
-    for (const n of [9, 23]) mov('gasto', entre(12000, 30000), 'Salidas', dia(n), { medio: 'Efectivo' });
+    for (const n of [9, 23]) mov('gasto', entre(12000, 30000), 'Salidas', dia(n), { cuenta: 'efectivo' });
+    // Sacar del cajero: pasa plata de Digital a Efectivo, no es gasto.
+    if (dia(8) <= hoyISO) {
+      movimientos.push({
+        id: crypto.randomUUID(), tipo: 'transferencia', monto: 60000, moneda: 'ARS', desde: 'digital',
+        hacia: 'efectivo', fecha: dia(8), nota: 'Cajero', creado: Date.parse(`${dia(8)}T12:00`),
+      });
+    }
     if (i === 2) mov('gasto', 85000, 'Ropa', dia(16), { medio: 'Crédito', nota: 'Zapatillas' });
     if (i === 4) mov('gasto', 45, 'Estudio', dia(12), { moneda: 'USD', medio: 'Crédito', nota: 'Curso online' });
   }
@@ -69,5 +76,5 @@ export function datosDemo(hoy = new Date()) {
     precioFecha: hoyISO, valorManual: null,
   }));
 
-  return { movimientos, posiciones };
+  return { movimientos, posiciones, ajustes: { saldos: { digital: 150000, efectivo: 20000 } } };
 }

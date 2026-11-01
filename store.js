@@ -226,7 +226,7 @@ export function exportar() {
 export function importar(archivo) {
   if (archivo?.formato !== 'bolsillo') throw new Error('El archivo no es un respaldo de Bolsillo.');
   const movimientos = (archivo.movimientos || [])
-    .filter(m => m && (m.tipo === 'ingreso' || m.tipo === 'gasto') && Number.isFinite(m.monto))
+    .filter(m => m && ['ingreso', 'gasto', 'transferencia'].includes(m.tipo) && Number.isFinite(m.monto))
     .map(m => limpiar({ ...m, id: m.id || nuevoId() }));
   const porTicker = new Map(estado.posiciones.map(p => [String(p.ticker).toUpperCase(), p]));
   const posiciones = (archivo.posiciones || [])
