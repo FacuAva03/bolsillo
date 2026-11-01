@@ -1,0 +1,6 @@
+{
+  "name": "bolsillo",
+  "private": true,
+  "type": "module",
+  "description": "PWA de finanzas personales: ingresos, gastos y cartera."
+}

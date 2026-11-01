@@ -1,0 +1,9 @@
+# Datos personales: nunca al repositorio
+cartera.json
+bolsillo-respaldo-*.json
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+__pycache__/

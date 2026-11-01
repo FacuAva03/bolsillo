@@ -1,0 +1,49 @@
+# CI/CD: en cada push a main revisa que el JavaScript no tenga errores de sintaxis (CI)
+# y, si pasa, publica la app en GitHub Pages (CD).
+name: Revisar y publicar
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  revisar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Revisar sintaxis
+        run: for f in *.js; do node --check "$f"; done
+      - name: Revisar el manifest
+        run: node -e "JSON.parse(require('fs').readFileSync('manifest.webmanifest','utf8'))"
+
+  publicar:
+    needs: revisar
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Armar la carpeta a publicar
+        run: |
+          mkdir _sitio
+          cp -r index.html styles.css app.js store.js config.js demo.js sw.js manifest.webmanifest icons _sitio/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _sitio
+      - id: deploy
+        uses: actions/deploy-pages@v4
