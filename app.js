@@ -87,8 +87,42 @@ function leerNumero(texto) {
   return Number.isFinite(n) ? n : NaN;
 }
 
-// Para inputs editables: sin separador de miles, para que leerNumero lo lea igual al volver.
-const paraInput = n => (Number.isFinite(n) ? String(n).replace('.', ',') : '');
+// "1500000" → "1.500.000" (solo la parte entera, sin la coma decimal).
+const agruparMiles = s => s.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+
+// Para inputs editables: con punto de miles y coma decimal, que leerNumero lee igual al volver.
+function paraInput(n) {
+  if (!Number.isFinite(n)) return '';
+  const [entero, decimales] = String(n).split('.');
+  return agruparMiles(entero) + (decimales ? `,${decimales}` : '');
+}
+
+// Formatea lo que se va escribiendo en un monto y dice dónde queda el cursor.
+// Solo valen las cifras y una coma; los puntos los pone la app.
+function formatearEscritura(texto, cursor) {
+  let limpio = '';
+  let antesDelCursor = 0;
+  for (let i = 0; i < texto.length; i++) {
+    const c = texto[i];
+    if (!/\d/.test(c) && !(c === ',' && !limpio.includes(','))) continue;
+    limpio += c;
+    if (i < cursor) antesDelCursor++;
+  }
+  let [entero, decimales] = limpio.split(',');
+  const ceros = entero.length - entero.replace(/^0+(?=\d)/, '').length;
+  entero = entero.slice(ceros);
+  antesDelCursor -= Math.min(ceros, antesDelCursor);
+  if (decimales !== undefined && !entero) {
+    entero = '0';
+    if (antesDelCursor > 0) antesDelCursor++;
+  }
+  const nuevo = agruparMiles(entero) + (decimales !== undefined ? `,${decimales}` : '');
+  let pos = 0;
+  for (let vistos = 0; vistos < antesDelCursor && pos < nuevo.length; pos++) {
+    if (nuevo[pos] !== '.') vistos++;
+  }
+  return { texto: nuevo, cursor: pos };
+}
 const redondear = n => Math.round(n * 100) / 100;
 
 function toast(texto) {
@@ -945,6 +979,61 @@ document.addEventListener('change', e => {
   }
   if ((e.target.name === 'tipo' || e.target.name === 'cuenta') && e.target.closest('[data-form=movimiento]')) {
     actualizarFormulario(e.target.closest('form'));
+  }
+});
+
+// Montos con punto de miles mientras se escribe.
+const CAMPO_MONTO = 'input[inputmode=decimal]';
+const valorPrevio = new WeakMap();
+
+document.addEventListener('beforeinput', e => {
+  if (e.target.matches?.(CAMPO_MONTO)) valorPrevio.set(e.target, e.target.value);
+});
+
+document.addEventListener('input', e => {
+  const input = e.target;
+  if (!input.matches?.(CAMPO_MONTO)) return;
+  let texto = input.value;
+  let cursor = input.selectionStart ?? texto.length;
+  const previo = valorPrevio.get(input) ?? '';
+  const sinPuntos = s => s.replace(/\./g, '');
+
+  if (e.inputType === 'insertFromPaste') {
+    // Lo pegado puede venir como "1500.50" o "1.500,50": se interpreta entero.
+    const n = leerNumero(texto);
+    if (Number.isFinite(n)) {
+      texto = paraInput(n);
+      cursor = texto.length;
+    }
+  } else if (e.data?.includes('.') && texto.slice(cursor - e.data.length, cursor) === e.data) {
+    // Los puntos de miles los pone la app; un punto tecleado solo cuenta como decimal en "0.".
+    const inicio = cursor - e.data.length;
+    let izquierda = sinPuntos(texto.slice(0, inicio));
+    let hayComa = texto.includes(',');
+    let insertado = '';
+    for (const c of e.data) {
+      if (c !== '.') insertado += c;
+      else if (!hayComa && /^0*$/.test(izquierda)) {
+        insertado += ',';
+        hayComa = true;
+      }
+      if (c !== '.') izquierda += c;
+    }
+    texto = texto.slice(0, inicio) + insertado + texto.slice(cursor);
+    cursor = inicio + insertado.length;
+  } else if (e.inputType?.startsWith('delete') && texto !== previo && sinPuntos(texto) === sinPuntos(previo)) {
+    // Borrar justo un punto de miles borra la cifra de al lado.
+    const i = e.inputType === 'deleteContentForward' ? cursor : cursor - 1;
+    if (/\d/.test(texto[i] || '')) {
+      texto = texto.slice(0, i) + texto.slice(i + 1);
+      cursor = i;
+    }
+  }
+
+  const res = formatearEscritura(texto, cursor);
+  if (res.texto !== input.value) {
+    input.value = res.texto;
+    if (document.activeElement === input) input.setSelectionRange(res.cursor, res.cursor);
   }
 });
 
